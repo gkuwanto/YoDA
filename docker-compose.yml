@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: yoda_postgres
+    environment:
+      POSTGRES_DB: dnd_dm_assistant
+      POSTGRES_USER: dnd_user
+      POSTGRES_PASSWORD: dnd_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yoda_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dnd_user -d dnd_dm_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: yoda_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - yoda_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: yoda_backend
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://dnd_user:dnd_pass@postgres:5432/dnd_dm_assistant
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your-secret-key-here
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - yoda_network
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  yoda_network:
+    driver: bridge 

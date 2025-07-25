@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: yoda_postgres_dev
+    environment:
+      POSTGRES_DB: dnd_dm_assistant
+      POSTGRES_USER: dnd_user
+      POSTGRES_PASSWORD: dnd_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - yoda_network_dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dnd_user -d dnd_dm_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: yoda_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_dev:/data
+    networks:
+      - yoda_network_dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API (Development)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: yoda_backend_dev
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://dnd_user:dnd_pass@postgres:5432/dnd_dm_assistant
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your-secret-key-here-change-in-production
+      RUST_LOG: debug
+      RUST_BACKTRACE: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - yoda_network_dev
+    volumes:
+      - ./backend:/usr/src/app
+      - /usr/src/app/target
+    restart: unless-stopped
+    command: ["cargo", "run"]
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+
+networks:
+  yoda_network_dev:
+    driver: bridge 
