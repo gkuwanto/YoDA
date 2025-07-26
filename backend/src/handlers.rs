@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use chrono::Utc;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use crate::models::{User, Campaign, Session, Character, GameState, InitiativeEntry};
+use crate::models::{User, Campaign, Session, Character, GameState, InitiativeEntry, EventLog};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use std::env;
 use crate::middleware::AuthUser;
@@ -1112,7 +1112,229 @@ pub async fn update_character_hp(
     }
 }
 
-#[cfg(test)]
+// Event Log handlers
+#[derive(Deserialize)]
+pub struct CreateEventLogRequest {
+    pub session_id: Uuid,
+    pub event_type: String,
+    pub event_data: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct EventLogResponse {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub event_type: String,
+    pub event_data: serde_json::Value,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn create_event_log(
+    Extension(pool): Extension<PgPool>,
+    Extension(user): Extension<AuthUser>,
+    Json(payload): Json<CreateEventLogRequest>,
+) -> impl IntoResponse {
+    // Check if user has access to this session
+    let session_access = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sessions s 
+         INNER JOIN campaigns c ON s.campaign_id = c.id 
+         WHERE s.id = $1 AND (c.dm_id = $2 OR s.campaign_id IN (SELECT campaign_id FROM campaign_players WHERE player_id = $2))"
+    )
+    .bind(payload.session_id)
+    .bind(user.0)
+    .fetch_one(&pool)
+    .await;
+
+    match session_access {
+        Ok(count) if count > 0 => {
+            let event_id = Uuid::new_v4();
+            let now = Utc::now();
+            
+            let event_log = sqlx::query_as::<_, EventLog>(
+                "INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) 
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+            )
+            .bind(event_id)
+            .bind(payload.session_id)
+            .bind(&payload.event_type)
+            .bind(&payload.event_data)
+            .bind(user.0)
+            .bind(now)
+            .fetch_one(&pool)
+            .await;
+
+            match event_log {
+                Ok(event) => (
+                    StatusCode::CREATED,
+                    axum::Json(EventLogResponse {
+                        id: event.id,
+                        session_id: event.session_id,
+                        event_type: event.event_type,
+                        event_data: event.event_data,
+                        created_by: event.created_by,
+                        created_at: event.created_at,
+                    })
+                ).into_response(),
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create event log").into_response(),
+            }
+        }
+        _ => (StatusCode::FORBIDDEN, "Access denied to this session").into_response(),
+    }
+}
+
+pub async fn list_event_logs(
+    Extension(pool): Extension<PgPool>,
+    Extension(user): Extension<AuthUser>,
+    Path(session_id): Path<Uuid>,
+) -> impl IntoResponse {
+    // Check if user has access to this session
+    let session_access = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sessions s 
+         INNER JOIN campaigns c ON s.campaign_id = c.id 
+         WHERE s.id = $1 AND (c.dm_id = $2 OR s.campaign_id IN (SELECT campaign_id FROM campaign_players WHERE player_id = $2))"
+    )
+    .bind(session_id)
+    .bind(user.0)
+    .fetch_one(&pool)
+    .await;
+
+    match session_access {
+        Ok(count) if count > 0 => {
+            let events = sqlx::query_as::<_, EventLog>(
+                "SELECT * FROM event_logs WHERE session_id = $1 ORDER BY created_at ASC"
+            )
+            .bind(session_id)
+            .fetch_all(&pool)
+            .await;
+
+            match events {
+                Ok(events) => {
+                    let responses: Vec<EventLogResponse> = events.into_iter().map(|e| EventLogResponse {
+                        id: e.id,
+                        session_id: e.session_id,
+                        event_type: e.event_type,
+                        event_data: e.event_data,
+                        created_by: e.created_by,
+                        created_at: e.created_at,
+                    }).collect();
+                    
+                    axum::Json(responses).into_response()
+                }
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch event logs").into_response(),
+            }
+        }
+        _ => (StatusCode::FORBIDDEN, "Access denied to this session").into_response(),
+    }
+}
+
+pub async fn get_event_log(
+    Extension(pool): Extension<PgPool>,
+    Extension(user): Extension<AuthUser>,
+    Path(event_id): Path<Uuid>,
+) -> impl IntoResponse {
+    // Check if user has access to this event's session
+    let event = sqlx::query_as::<_, EventLog>(
+        "SELECT el.* FROM event_logs el 
+         INNER JOIN sessions s ON el.session_id = s.id 
+         INNER JOIN campaigns c ON s.campaign_id = c.id 
+         WHERE el.id = $1 AND (c.dm_id = $2 OR s.campaign_id IN (SELECT campaign_id FROM campaign_players WHERE player_id = $2))"
+    )
+    .bind(event_id)
+    .bind(user.0)
+    .fetch_optional(&pool)
+    .await;
+
+    match event {
+        Ok(Some(event)) => {
+            let response = EventLogResponse {
+                id: event.id,
+                session_id: event.session_id,
+                event_type: event.event_type,
+                event_data: event.event_data,
+                created_by: event.created_by,
+                created_at: event.created_at,
+            };
+            axum::Json(response).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "Event log not found").into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch event log").into_response(),
+    }
+}
+
+// AI Integration handlers
+#[derive(Deserialize)]
+pub struct AIRequest {
+    pub prompt: String,
+    pub context: Option<String>,
+    pub session_id: Option<Uuid>,
+    pub request_type: String, // "npc", "location", "encounter", "description", "chat"
+}
+
+#[derive(Serialize)]
+pub struct AIResponse {
+    pub response: String,
+    pub tokens_used: Option<i32>,
+    pub model: String,
+}
+
+pub async fn ai_generate(
+    Extension(pool): Extension<PgPool>,
+    Extension(user): Extension<AuthUser>,
+    Json(payload): Json<AIRequest>,
+) -> impl IntoResponse {
+    // For now, return a mock response
+    // TODO: Implement actual AI integration
+    let response = match payload.request_type.as_str() {
+        "npc" => {
+            format!("Generated NPC: A mysterious figure with a weathered cloak and piercing eyes. They seem to know more than they let on...")
+        }
+        "location" => {
+            format!("Generated Location: A dimly lit tavern with smoke curling from the fireplace. The wooden beams creak with age, and the air is thick with the smell of ale and adventure.")
+        }
+        "encounter" => {
+            format!("Generated Encounter: A group of bandits has set up an ambush in the forest. They're well-armed and seem desperate, suggesting they might be open to negotiation.")
+        }
+        "description" => {
+            format!("Enhanced Description: The ancient castle looms before you, its weathered stone walls bearing the scars of countless battles. Torches flicker in the arrow slits, casting dancing shadows that seem to move of their own accord.")
+        }
+        "chat" => {
+            format!("AI Assistant: Based on the current situation, I'd suggest considering the diplomatic approach. The goblins seem nervous and might be more interested in survival than combat.")
+        }
+        _ => {
+            format!("AI Response: I'm here to help with your D&D session. What would you like me to assist with?")
+        }
+    };
+
+    // Log the AI request as an event if session_id is provided
+    if let Some(session_id) = payload.session_id {
+        let _ = sqlx::query(
+            "INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) 
+             VALUES ($1, $2, $3, $4, $5, $6)"
+        )
+        .bind(Uuid::new_v4())
+        .bind(session_id)
+        .bind("ai_request")
+        .bind(serde_json::json!({
+            "prompt": payload.prompt,
+            "request_type": payload.request_type,
+            "response": response
+        }))
+        .bind(user.0)
+        .bind(Utc::now())
+        .execute(&pool)
+        .await;
+    }
+
+    let ai_response = AIResponse {
+        response,
+        tokens_used: Some(150), // Mock value
+        model: "gpt-4".to_string(),
+    };
+
+    axum::Json(ai_response).into_response()
+}
+
 mod tests {
     use super::*;
     use sqlx::PgPool;
@@ -2354,6 +2576,249 @@ mod tests {
 
         let auth_user = AuthUser(user_id);
         let response = update_initiative(Extension(pool), Extension(auth_user), Json(request)).await;
+        let response_parts = response.into_response().into_parts();
+        
+        assert_eq!(response_parts.0.status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_create_event_log() {
+        let pool = create_test_pool().await;
+        
+        // Create a test user and campaign
+        let user_id = Uuid::new_v4();
+        let timestamp = Utc::now().timestamp();
+        sqlx::query("INSERT INTO users (id, email, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(user_id)
+            .bind(format!("event_log_dm{}@example.com", timestamp))
+            .bind(format!("event_log_dmuser{}", timestamp))
+            .bind("hashed_password")
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let campaign_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO campaigns (id, name, description, dm_id, settings, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(campaign_id)
+            .bind("Event Log Campaign")
+            .bind("A campaign for testing event logs")
+            .bind(user_id)
+            .bind(json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let session_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO sessions (id, campaign_id, name, status, game_state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(session_id)
+            .bind(campaign_id)
+            .bind("Event Log Session")
+            .bind("planned")
+            .bind(serde_json::json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let request = CreateEventLogRequest {
+            session_id,
+            event_type: "Test Event".to_string(),
+            event_data: json!({"message": "This is a test event"}),
+        };
+
+        let auth_user = AuthUser(user_id);
+        let response = create_event_log(Extension(pool), Extension(auth_user), Json(request)).await;
+        let response_parts = response.into_response().into_parts();
+        
+        assert_eq!(response_parts.0.status, StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_list_event_logs() {
+        let pool = create_test_pool().await;
+        
+        // Create a test user and campaign
+        let user_id = Uuid::new_v4();
+        let timestamp = Utc::now().timestamp();
+        let random_suffix = rand::random::<u32>();
+        sqlx::query("INSERT INTO users (id, email, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(user_id)
+            .bind(format!("event_log_dm{}_{}@example.com", timestamp, random_suffix))
+            .bind(format!("event_log_dmuser{}_{}", timestamp, random_suffix))
+            .bind("hashed_password")
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let campaign_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO campaigns (id, name, description, dm_id, settings, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(campaign_id)
+            .bind("Event Log Campaign")
+            .bind("A campaign for testing event logs")
+            .bind(user_id)
+            .bind(json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let session_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO sessions (id, campaign_id, name, status, game_state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(session_id)
+            .bind(campaign_id)
+            .bind("Event Log Session")
+            .bind("planned")
+            .bind(serde_json::json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let event_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(event_id)
+            .bind(session_id)
+            .bind("Test Event")
+            .bind(json!({"message": "This is a test event"}))
+            .bind(user_id)
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let auth_user = AuthUser(user_id);
+        let response = list_event_logs(Extension(pool), Extension(auth_user), Path(session_id)).await;
+        let response_parts = response.into_response().into_parts();
+        
+        assert_eq!(response_parts.0.status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_event_log() {
+        let pool = create_test_pool().await;
+        
+        // Create a test user and campaign
+        let user_id = Uuid::new_v4();
+        let timestamp = Utc::now().timestamp();
+        let random_suffix = rand::random::<u32>();
+        sqlx::query("INSERT INTO users (id, email, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(user_id)
+            .bind(format!("event_log_dm{}_{}@example.com", timestamp, random_suffix))
+            .bind(format!("event_log_dmuser{}_{}", timestamp, random_suffix))
+            .bind("hashed_password")
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let campaign_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO campaigns (id, name, description, dm_id, settings, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(campaign_id)
+            .bind("Event Log Campaign")
+            .bind("A campaign for testing event logs")
+            .bind(user_id)
+            .bind(json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let session_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO sessions (id, campaign_id, name, status, game_state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(session_id)
+            .bind(campaign_id)
+            .bind("Event Log Session")
+            .bind("planned")
+            .bind(serde_json::json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let event_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(event_id)
+            .bind(session_id)
+            .bind("Test Event")
+            .bind(json!({"message": "This is a test event"}))
+            .bind(user_id)
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let auth_user = AuthUser(user_id);
+        let response = get_event_log(Extension(pool), Extension(auth_user), Path(event_id)).await;
+        let response_parts = response.into_response().into_parts();
+        
+        assert_eq!(response_parts.0.status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_ai_generate() {
+        let pool = create_test_pool().await;
+        
+        // Create a test user and campaign
+        let user_id = Uuid::new_v4();
+        let timestamp = Utc::now().timestamp();
+        sqlx::query("INSERT INTO users (id, email, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(user_id)
+            .bind(format!("ai_dm{}@example.com", timestamp))
+            .bind(format!("ai_dmuser{}", timestamp))
+            .bind("hashed_password")
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let campaign_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO campaigns (id, name, description, dm_id, settings, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(campaign_id)
+            .bind("AI Campaign")
+            .bind("A campaign for testing AI integration")
+            .bind(user_id)
+            .bind(json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let session_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO sessions (id, campaign_id, name, status, game_state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(session_id)
+            .bind(campaign_id)
+            .bind("AI Session")
+            .bind("planned")
+            .bind(serde_json::json!({}))
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let request = AIRequest {
+            prompt: "What's the weather like today?".to_string(),
+            context: Some("The weather is sunny and warm.".to_string()),
+            session_id: Some(session_id),
+            request_type: "chat".to_string(),
+        };
+
+        let auth_user = AuthUser(user_id);
+        let response = ai_generate(Extension(pool), Extension(auth_user), Json(request)).await;
         let response_parts = response.into_response().into_parts();
         
         assert_eq!(response_parts.0.status, StatusCode::OK);

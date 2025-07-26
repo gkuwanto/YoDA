@@ -67,6 +67,12 @@ async fn main() {
         .route("/characters/:id/hp", put(handlers::update_character_hp).route_layer(axum::middleware::from_fn(jwt_auth)))
         // Game state routes (protected)
         .route("/initiative", put(handlers::update_initiative).route_layer(axum::middleware::from_fn(jwt_auth)))
+        // Event log routes (protected)
+        .route("/event-logs", post(handlers::create_event_log).route_layer(axum::middleware::from_fn(jwt_auth)))
+        .route("/sessions/:session_id/event-logs", get(handlers::list_event_logs).route_layer(axum::middleware::from_fn(jwt_auth)))
+        .route("/event-logs/:event_id", get(handlers::get_event_log).route_layer(axum::middleware::from_fn(jwt_auth)))
+        // AI routes (protected)
+        .route("/ai/generate", post(handlers::ai_generate).route_layer(axum::middleware::from_fn(jwt_auth)))
         // Health check endpoint
         .route("/health", get(health_check))
         .route("/docs", get(api::docs::api_docs))

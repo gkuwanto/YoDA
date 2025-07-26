@@ -46,6 +46,8 @@ pub enum ClientMessage {
     UpdateInitiative { session_id: Uuid, initiative_order: Vec<InitiativeEntry> },
     NextTurn { session_id: Uuid },
     UpdateHP { character_id: Uuid, hp_current: i32, hp_max: Option<i32> },
+    CreateEventLog { session_id: Uuid, event_type: String, event_data: serde_json::Value },
+    AIRequest { prompt: String, request_type: String, context: Option<String> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,6 +63,8 @@ pub enum ServerMessage {
     InitiativeUpdated { session_id: Uuid, initiative_order: Vec<InitiativeEntry>, current_turn: Option<Uuid> },
     TurnChanged { session_id: Uuid, current_turn: Uuid, round: i32 },
     HPUpdated { character_id: Uuid, hp_current: i32, hp_max: i32 },
+    EventLogCreated { event_id: Uuid, event_type: String, event_data: serde_json::Value, created_by: Uuid, created_at: DateTime<Utc> },
+    AIResponse { response: String, request_type: String, tokens_used: Option<i32>, model: String },
     Error { message: String },
 }
 
@@ -533,6 +537,114 @@ async fn handle_client_message(
                 hp_current: res.hp_current.unwrap_or(0),
                 hp_max: res.hp_max.unwrap_or(0),
             })
+        }
+        
+        ClientMessage::CreateEventLog { session_id, event_type, event_data } => {
+            // Check if user has access to this session
+            let has_access = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM sessions s 
+                 INNER JOIN campaigns c ON s.campaign_id = c.id 
+                 WHERE s.id = $1 AND (c.dm_id = $2 OR s.campaign_id IN (SELECT campaign_id FROM campaign_players WHERE player_id = $2)))"
+            )
+            .bind(session_id)
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?;
+
+            if !has_access {
+                return Err("Access denied to this session".to_string());
+            }
+
+            // Create event log in database
+            let event_id = Uuid::new_v4();
+            let now = Utc::now();
+            
+            let event_log = sqlx::query_as::<_, crate::models::EventLog>(
+                "INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) 
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *"
+            )
+            .bind(event_id)
+            .bind(session_id)
+            .bind(&event_type)
+            .bind(&event_data)
+            .bind(user_id)
+            .bind(now)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Failed to create event log: {}", e))?;
+
+            // Broadcast to all players in the session
+            let event_msg = ServerMessage::EventLogCreated {
+                event_id: event_log.id,
+                event_type: event_log.event_type,
+                event_data: event_log.event_data,
+                created_by: event_log.created_by.unwrap_or(user_id),
+                created_at: event_log.created_at,
+            };
+            
+            broadcast_to_session(session_state, session_id, &event_msg).await;
+
+            Ok(event_msg)
+        }
+        
+        ClientMessage::AIRequest { prompt, request_type, context: _ } => {
+            // For now, return a mock AI response
+            // TODO: Implement actual AI integration
+            let response = match request_type.as_str() {
+                "npc" => {
+                    format!("Generated NPC: A mysterious figure with a weathered cloak and piercing eyes. They seem to know more than they let on...")
+                }
+                "location" => {
+                    format!("Generated Location: A dimly lit tavern with smoke curling from the fireplace. The wooden beams creak with age, and the air is thick with the smell of ale and adventure.")
+                }
+                "encounter" => {
+                    format!("Generated Encounter: A group of bandits has set up an ambush in the forest. They're well-armed and seem desperate, suggesting they might be open to negotiation.")
+                }
+                "description" => {
+                    format!("Enhanced Description: The ancient castle looms before you, its weathered stone walls bearing the scars of countless battles. Torches flicker in the arrow slits, casting dancing shadows that seem to move of their own accord.")
+                }
+                "chat" => {
+                    format!("AI Assistant: Based on the current situation, I'd suggest considering the diplomatic approach. The goblins seem nervous and might be more interested in survival than combat.")
+                }
+                _ => {
+                    format!("AI Response: I'm here to help with your D&D session. What would you like me to assist with?")
+                }
+            };
+
+            // Log the AI request as an event if we're in a session
+            if let Some(session_id) = current_session {
+                let _ = sqlx::query(
+                    "INSERT INTO event_logs (id, session_id, event_type, event_data, created_by, created_at) 
+                     VALUES ($1, $2, $3, $4, $5, $6)"
+                )
+                .bind(Uuid::new_v4())
+                .bind(*session_id)
+                .bind("ai_request")
+                .bind(serde_json::json!({
+                    "prompt": prompt,
+                    "request_type": request_type,
+                    "response": response
+                }))
+                .bind(user_id)
+                .bind(Utc::now())
+                .execute(pool)
+                .await;
+            }
+
+            let ai_response = ServerMessage::AIResponse {
+                response,
+                request_type,
+                tokens_used: Some(150), // Mock value
+                model: "gpt-4".to_string(),
+            };
+
+            // Broadcast AI response to all players in the session
+            if let Some(session_id) = current_session {
+                broadcast_to_session(session_state, *session_id, &ai_response).await;
+            }
+
+            Ok(ai_response)
         }
     }
 }
