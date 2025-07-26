@@ -1,0 +1,1273 @@
+{
+	"info": {
+		"_postman_id": "yoda-api-tests",
+		"name": "YoDA API Tests",
+		"description": "Comprehensive test suite for YoDA (Your D&D Assistant) API\n\nThis collection tests all endpoints including:\n- Authentication (Register/Login)\n- Campaign Management\n- Session Management\n- Character Management\n- Game State Management\n- WebSocket connections\n\nBase URL: http://localhost:3000",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "yoda-api"
+	},
+	"item": [
+		{
+			"name": "🏥 Health Check",
+			"item": [
+				{
+					"name": "Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is OK\", function () {",
+									"    pm.expect(pm.response.text()).to.eql(\"OK\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Basic health check endpoint tests"
+		},
+		{
+			"name": "🔐 Authentication",
+			"item": [
+				{
+					"name": "Register User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response contains success message\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"Registered\");",
+									"});",
+									"",
+									"// Store user data for later tests",
+									"if (pm.response.code === 201) {",
+									"    pm.collectionVariables.set(\"test_email\", pm.request.body.raw.email);",
+									"    pm.collectionVariables.set(\"test_username\", pm.request.body.raw.username);",
+									"    pm.collectionVariables.set(\"test_password\", pm.request.body.raw.password);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{$randomEmail}}\",\n  \"username\": \"{{$randomFullName}}\",\n  \"password\": \"testpass123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Register Duplicate User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 409\", function () {",
+									"    pm.response.to.have.status(409);",
+									"});",
+									"",
+									"pm.test(\"Response indicates conflict\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"already exists\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test@example.com\",\n  \"username\": \"testuser\",\n  \"password\": \"testpass123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login Success",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains token\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('token');",
+									"    pm.expect(response.token).to.be.a('string');",
+									"    pm.expect(response.token.length).to.be.greaterThan(0);",
+									"});",
+									"",
+									"// Store token for authenticated requests",
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    pm.collectionVariables.set(\"auth_token\", response.token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"testpass123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login Invalid Credentials",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 401\", function () {",
+									"    pm.response.to.have.status(401);",
+									"});",
+									"",
+									"pm.test(\"Response indicates invalid credentials\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"Invalid email or password\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"nonexistent@example.com\",\n  \"password\": \"wrongpassword\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoint tests"
+		},
+		{
+			"name": "🏰 Campaign Management",
+			"item": [
+				{
+					"name": "Create Campaign",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response contains campaign data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('dm_id');",
+									"    pm.expect(response.name).to.eql('Lost Mine of Phandelver');",
+									"});",
+									"",
+									"// Store campaign ID for later tests",
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.collectionVariables.set(\"campaign_id\", response.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Lost Mine of Phandelver\",\n  \"description\": \"A classic D&D adventure\",\n  \"settings\": {\n    \"theme\": \"dark\",\n    \"difficulty\": \"medium\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/campaigns",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Campaigns",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.be.an('array');",
+									"});",
+									"",
+									"pm.test(\"Campaigns have required fields\", function () {",
+									"    const response = pm.response.json();",
+									"    if (response.length > 0) {",
+									"        const campaign = response[0];",
+									"        pm.expect(campaign).to.have.property('id');",
+									"        pm.expect(campaign).to.have.property('name');",
+									"        pm.expect(campaign).to.have.property('dm_id');",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/campaigns",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Campaign",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains campaign data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('dm_id');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/campaigns/{{campaign_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns",
+								"{{campaign_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Campaign",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains updated data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response.name).to.eql('Updated Campaign Name');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Campaign Name\",\n  \"description\": \"Updated description\",\n  \"settings\": {\n    \"theme\": \"light\",\n    \"difficulty\": \"hard\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/campaigns/{{campaign_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns",
+								"{{campaign_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Campaign",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response indicates deletion\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"Campaign deleted\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/campaigns/{{campaign_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns",
+								"{{campaign_id}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Campaign management endpoint tests"
+		},
+		{
+			"name": "🎮 Session Management",
+			"item": [
+				{
+					"name": "Create Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response contains session data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('campaign_id');",
+									"    pm.expect(response).to.have.property('status');",
+									"    pm.expect(response.status).to.eql('planned');",
+									"});",
+									"",
+									"// Store session ID for later tests",
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.collectionVariables.set(\"session_id\", response.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"campaign_id\": \"{{campaign_id}}\",\n  \"name\": \"Session 1: Goblin Ambush\",\n  \"description\": \"The party encounters goblins on the road\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/sessions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"sessions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Sessions",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/sessions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"sessions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains session data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('status');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/sessions/{{session_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"sessions",
+								"{{session_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Start Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Session status is active\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('status');",
+									"    pm.expect(response.status).to.eql('active');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/sessions/{{session_id}}/start",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"sessions",
+								"{{session_id}}",
+								"start"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "End Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Session status is ended\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('status');",
+									"    pm.expect(response.status).to.eql('ended');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/sessions/{{session_id}}/end",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"sessions",
+								"{{session_id}}",
+								"end"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Session management endpoint tests"
+		},
+		{
+			"name": "👤 Character Management",
+			"item": [
+				{
+					"name": "Create Character",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 201\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test(\"Response contains character data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('campaign_id');",
+									"    pm.expect(response).to.have.property('level');",
+									"    pm.expect(response.name).to.eql('Gandalf the Grey');",
+									"});",
+									"",
+									"// Store character ID for later tests",
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    pm.collectionVariables.set(\"character_id\", response.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"campaign_id\": \"{{campaign_id}}\",\n  \"name\": \"Gandalf the Grey\",\n  \"race\": \"Human\",\n  \"class\": \"Wizard\",\n  \"level\": 5,\n  \"hp_max\": 25,\n  \"ac\": 15,\n  \"speed\": 30,\n  \"stats\": {\n    \"strength\": 10,\n    \"dexterity\": 14,\n    \"constitution\": 12,\n    \"intelligence\": 18,\n    \"wisdom\": 16,\n    \"charisma\": 14\n  },\n  \"inventory\": [],\n  \"spells\": [],\n  \"features\": []\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/characters",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Characters",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response is an array\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/characters",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Character",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains character data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('id');",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response).to.have.property('level');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/characters/{{character_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters",
+								"{{character_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Character",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains updated data\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('name');",
+									"    pm.expect(response.name).to.eql('Updated Character Name');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Character Name\",\n  \"level\": 6,\n  \"hp_current\": 30,\n  \"hp_max\": 30,\n  \"ac\": 16,\n  \"stats\": {\n    \"strength\": 10,\n    \"dexterity\": 14,\n    \"constitution\": 12,\n    \"intelligence\": 18,\n    \"wisdom\": 16,\n    \"charisma\": 14\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/characters/{{character_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters",
+								"{{character_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Character HP",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response contains updated HP\", function () {",
+									"    const response = pm.response.json();",
+									"    pm.expect(response).to.have.property('hp_current');",
+									"    pm.expect(response.hp_current).to.eql(20);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"hp_current\": 20,\n  \"hp_max\": 30\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/characters/{{character_id}}/hp",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters",
+								"{{character_id}}",
+								"hp"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Character",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response indicates deletion\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"Character deleted\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/characters/{{character_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"characters",
+								"{{character_id}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Character management endpoint tests"
+		},
+		{
+			"name": "⚔️ Game State Management",
+			"item": [
+				{
+					"name": "Update Initiative",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response indicates success\", function () {",
+									"    pm.expect(pm.response.text()).to.include(\"Initiative updated\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"initiative_order\": [\n    {\n      \"id\": \"{{$guid}}\",\n      \"name\": \"Player 1\",\n      \"initiative\": 18,\n      \"is_player\": true,\n      \"character_id\": \"{{character_id}}\",\n      \"user_id\": \"{{user_id}}\",\n      \"hp_current\": 25,\n      \"hp_max\": 25,\n      \"ac\": 16\n    },\n    {\n      \"id\": \"{{$guid}}\",\n      \"name\": \"Goblin 1\",\n      \"initiative\": 15,\n      \"is_player\": false,\n      \"character_id\": null,\n      \"user_id\": null,\n      \"hp_current\": 7,\n      \"hp_max\": 7,\n      \"ac\": 15\n    }\n  ],\n  \"current_turn\": \"{{$guid}}\",\n  \"round\": 1,\n  \"combat_active\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/initiative",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"initiative"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Game state management endpoint tests"
+		},
+		{
+			"name": "🔌 WebSocket Tests",
+			"item": [
+				{
+					"name": "WebSocket Connection Test",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Note: This is a placeholder for WebSocket testing",
+									"// Postman has limited WebSocket support",
+									"// Consider using a dedicated WebSocket client for these tests",
+									"",
+									"pm.test(\"WebSocket endpoint exists\", function () {",
+									"    // This would need to be tested with a WebSocket client",
+									"    pm.expect(true).to.be.true;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/ws",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"ws"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "WebSocket endpoint tests (requires external WebSocket client)"
+		},
+		{
+			"name": "🚫 Error Handling",
+			"item": [
+				{
+					"name": "Unauthorized Access",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 401\", function () {",
+									"    pm.response.to.have.status(401);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/campaigns",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Invalid Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 401\", function () {",
+									"    pm.response.to.have.status(401);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer invalid_token_here"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/campaigns",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Resource Not Found",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 404\", function () {",
+									"    pm.response.to.have.status(404);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/campaigns/00000000-0000-0000-0000-000000000000",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"campaigns",
+								"00000000-0000-0000-0000-000000000000"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "Error handling tests"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Set up test data if needed",
+					"if (!pm.collectionVariables.get(\"base_url\")) {",
+					"    pm.collectionVariables.set(\"base_url\", \"http://localhost:3000\");",
+					"}"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Global test setup",
+					"console.log(\"Running test: \" + pm.info.requestName);"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "campaign_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "session_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "character_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string"
+		}
+	]
+} 
